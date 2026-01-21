@@ -137,3 +137,41 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# -------------------------
+# Additional recommended ignores for this project
+# -------------------------
+
+# Editor/IDE
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Coverage (duplicate safe)
+coverage/
+
+# Python (worker)
+__pycache__/
+*.pyc
+.venv/
+venv/
+pip-wheel-metadata/
+*.egg-info/
+
+# ffmpeg / temp artifacts (avoid committing large media/temp files)
+*.wav
+*.mp4
+*.mov
+*.mkv
+tmp/
+temp/
+*.log
+
+# Misc
+*.sqlite
+*.sqlite3

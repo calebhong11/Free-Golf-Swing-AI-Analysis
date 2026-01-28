@@ -73,7 +73,8 @@ export default function AnalysisResults({ results, onAnalyzeAnother }: AnalysisR
         </div>
 
         <p className="text-gray-600 dark:text-gray-400">
-          {score >= 8 && "Excellent swing! You're hitting it well."}
+          {score >= 9 && "You have a tour level swing."}
+          {score >= 8 && score < 9 && "Excellent swing! You almost have a tour level swing."}
           {score >= 6 && score < 8 && "Good swing with room for improvement."}
           {score >= 4 && score < 6 && "Decent swing, but let's work on a few things."}
           {score < 4 && "There's opportunity to improve your technique."}
@@ -120,7 +121,7 @@ export default function AnalysisResults({ results, onAnalyzeAnother }: AnalysisR
       <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6">
         <h3 className="text-xl font-semibold mb-4 flex items-center gap-2 text-green-600 dark:text-green-400">
           <CheckCircle2 className="w-5 h-5" />
-          What You're Doing Well
+          What You Are Doing Well
         </h3>
         <ul className="space-y-3">
           {strengths.map((strength, index) => (

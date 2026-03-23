@@ -1,30 +1,66 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import UploadZone from '@/components/UploadZone';
 import ProgressIndicator from '@/components/ProgressIndicator';
 import AnalysisResults from '@/components/AnalysisResults';
+import { extractFramesFromVideo, ExtractedFrame } from '@/lib/frameExtractor';
 
 type AnalysisState = 'idle' | 'uploading' | 'processing' | 'completed' | 'error';
+
+const TOTAL_FRAMES = 15;
 
 export default function Home() {
   const [analysisState, setAnalysisState] = useState<AnalysisState>('idle');
   const [progress, setProgress] = useState(0);
+  const [targetProgress, setTargetProgress] = useState(0);
   const [results, setResults] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [extractedFrames, setExtractedFrames] = useState<ExtractedFrame[]>([]);
+  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Smooth progress animation
+  useEffect(() => {
+    if (progress < targetProgress) {
+      progressIntervalRef.current = setInterval(() => {
+        setProgress((prev) => {
+          const diff = targetProgress - prev;
+          const increment = Math.max(0.5, Math.ceil(diff / 20));
+          const newProgress = Math.min(prev + increment, targetProgress);
+
+          if (newProgress >= targetProgress) {
+            if (progressIntervalRef.current) {
+              clearInterval(progressIntervalRef.current);
+            }
+          }
+
+          return newProgress;
+        });
+      }, 50);
+    }
+
+    return () => {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+      }
+    };
+  }, [targetProgress, progress]);
 
   const handleFileUpload = async (file: File) => {
     try {
       setAnalysisState('uploading');
-      setProgress(10);
+      setProgress(0);
+      setTargetProgress(0);
+      setExtractedFrames([]);
       setError(null);
 
-      // Create form data
       const formData = new FormData();
       formData.append('video', file);
 
-      // Upload video
-      setProgress(30);
+      // Stage 1: Uploading (0-20%)
+      setTargetProgress(20);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
       const uploadResponse = await fetch('/api/upload', {
         method: 'POST',
         body: formData,
@@ -35,10 +71,36 @@ export default function Home() {
       }
 
       const { jobId } = await uploadResponse.json();
-      
-      // Start analysis
+
+      // Stage 2: Extract frames LIVE (20-40%)
+      // Progress updates in real time as each frame extracts
       setAnalysisState('processing');
-      setProgress(50);
+      setTargetProgress(20); // Hold here while extracting
+
+      try {
+        await extractFramesFromVideo(file, TOTAL_FRAMES, (frame, index, total) => {
+          // This fires after EACH frame is extracted
+          setExtractedFrames(prev => [...prev, frame]);
+
+          // Update progress: each frame = ~1.33% (20% range / 15 frames)
+          const frameProgress = 20 + ((index + 1) / total) * 20;
+          setTargetProgress(Math.round(frameProgress));
+        });
+      } catch {
+        // Frame extraction failed - continue without frames
+        console.log('Frame extraction failed, continuing without frames');
+      }
+
+      // Make sure we hit 40% after extraction
+      setTargetProgress(40);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Stage 3: Detecting keypoints (40-65%)
+      setTargetProgress(65);
+      await new Promise(resolve => setTimeout(resolve, 2500));
+
+      // Stage 4: Analyzing mechanics (65-85%)
+      setTargetProgress(85);
 
       const analysisResponse = await fetch('/api/analyze', {
         method: 'POST',
@@ -51,22 +113,34 @@ export default function Home() {
       }
 
       const analysisData = await analysisResponse.json();
-      
-      setProgress(100);
-      setResults(analysisData);
+
+      // Stage 5: Generating feedback (85-100%)
+      setTargetProgress(100);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      // Pass frames into results so AnalysisResults can display them
+      setResults({
+        ...analysisData,
+        frames: extractedFrames,
+      });
       setAnalysisState('completed');
 
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
       setAnalysisState('error');
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+      }
     }
   };
 
   const handleReset = () => {
     setAnalysisState('idle');
     setProgress(0);
+    setTargetProgress(0);
     setResults(null);
     setError(null);
+    setExtractedFrames([]);
   };
 
   return (
@@ -88,15 +162,17 @@ export default function Home() {
         )}
 
         {(analysisState === 'uploading' || analysisState === 'processing') && (
-          <ProgressIndicator 
+          <ProgressIndicator
             status={analysisState === 'uploading' ? 'Uploading video...' : 'Analyzing your swing...'}
             progress={progress}
+            frames={extractedFrames}
+            totalFrames={TOTAL_FRAMES}
           />
         )}
 
         {analysisState === 'completed' && results && (
-          <AnalysisResults 
-            results={results} 
+          <AnalysisResults
+            results={results}
             onAnalyzeAnother={handleReset}
           />
         )}

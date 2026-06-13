@@ -1,60 +1,41 @@
-/**
- * AI Analyzer Module
- * 
- * Generates natural language feedback using LLM
- */
-
 import { SwingMetrics } from './poseDetection';
 import { ScoreBreakdown } from './swingScorer';
 
 export interface AnalysisFeedback {
+  setup: string;
+  backswing: string;
+  downswing: string;
+  followThrough: string;
   strengths: string[];
   improvements: string[];
   drills: string[];
+  source: 'replicate' | 'mock';
 }
 
-/**
- * Generate AI feedback using OpenAI
- * TODO: Add OpenAI integration
- */
 export async function generateFeedback(
   metrics: SwingMetrics,
   score: ScoreBreakdown
 ): Promise<AnalysisFeedback> {
-  // Placeholder implementation
-  // In production, call OpenAI API with structured prompt
+  const apiToken = process.env.REPLICATE_API_TOKEN;
   
-  const apiKey = process.env.OPENAI_API_KEY;
-  
-  if (!apiKey) {
-    console.warn('OpenAI API key not configured. Using mock feedback.');
-    return generateMockFeedback(metrics, score);
+  if (apiToken) {
+    try {
+      const feedback = await generateReplicateFeedback(metrics, score);
+      return { ...feedback, source: 'replicate' };
+    } catch (error) {
+      console.warn('Replicate failed, falling back to mock:', error);
+    }
+  } else {
+    console.warn('REPLICATE_API_TOKEN not configured. Using mock feedback.');
   }
   
-  try {
-    // TODO: Implement OpenAI API call
-    // const prompt = buildPrompt(metrics, score);
-    // const response = await openai.chat.completions.create({
-    //   model: "gpt-4",
-    //   messages: [{ role: "user", content: prompt }],
-    // });
-    
-    // For now, return mock data
-    return generateMockFeedback(metrics, score);
-    
-  } catch (error) {
-    console.error('AI feedback generation failed:', error);
-    return generateMockFeedback(metrics, score);
-  }
+  return { ...generateMockFeedback(metrics, score), source: 'mock' };
 }
 
-/**
- * Build structured prompt for LLM
- */
 function buildPrompt(metrics: SwingMetrics, score: ScoreBreakdown): string {
-  return `You are a professional golf instructor analyzing a student's swing.
+  return `You are an elite golf instructor analyzing a golfer's swing in detail. Provide VERY COMPREHENSIVE, INSIGHTFUL feedback.
 
-SWING METRICS:
+DETECTED SWING METRICS:
 - Hip Rotation: ${metrics.hipRotation}° (ideal: 45-60°)
 - Shoulder Turn: ${metrics.shoulderTurn}° (ideal: 90-110°)
 - Head Movement: ${metrics.headMovement}cm (ideal: <2cm)
@@ -62,7 +43,7 @@ SWING METRICS:
 - Arm Extension: ${(metrics.armExtension * 100).toFixed(0)}% (ideal: >85%)
 - Weight Transfer: ${(metrics.weightTransfer * 100).toFixed(0)}% (ideal: >70%)
 
-SCORE BREAKDOWN:
+SWING PHASE SCORES:
 - Overall: ${score.overall}/10
 - Setup: ${score.setup}/10
 - Backswing: ${score.backswing}/10
@@ -70,22 +51,146 @@ SCORE BREAKDOWN:
 - Impact: ${score.impact}/10
 - Follow-through: ${score.followThrough}/10
 
-Please provide:
-1. 2-3 specific strengths in the swing
-2. 2-3 areas for improvement with clear explanations
-3. 1-2 actionable practice drills
+PROVIDE DETAILED ANALYSIS (3-4 sentences per section, not bullet points):
 
-Format your response as JSON:
+1. **Setup and Alignment** - Discuss posture, stance, spine angle, alignment. Explain WHY proper setup matters for the entire swing.
+
+2. **The Backswing** - Analyze rotation quality, club plane, wrist position. Explain what the metrics reveal and what it enables.
+
+3. **Downswing and Impact** - Discuss weight transfer, sequencing, hand position at impact. Explain why this matters for ball striking.
+
+4. **Follow-Through and Finish** - Describe balance, weight distribution, control. What does the finish position reveal?
+
+5. **Key Strengths** (3 specific observations with metric details)
+   - What the golfer does exceptionally well
+   - Why it's valuable
+   - Reference actual values
+
+6. **Areas for Improvement** (3 specific areas with explanations)
+   - What could be refined
+   - Why it matters
+   - How it affects ball striking
+
+7. **One Actionable Drill** - Specific, detailed exercise to address the main weakness.
+
+Use vivid, technical language. Reference specific metric values. Write like you're a pro coach explaining to a serious student.
+
+Respond ONLY in JSON:
 {
-  "strengths": ["...", "..."],
-  "improvements": ["...", "..."],
-  "drills": ["...", "..."]
+  "setup": "3-4 sentence detailed paragraph...",
+  "backswing": "3-4 sentence detailed paragraph...",
+  "downswing": "3-4 sentence detailed paragraph...",
+  "followThrough": "3-4 sentence detailed paragraph...",
+  "strengths": ["Long detailed strength 1...", "Long detailed strength 2...", "Long detailed strength 3..."],
+  "improvements": ["Long detailed improvement 1...", "Long detailed improvement 2...", "Long detailed improvement 3..."],
+  "drills": ["Detailed drill description..."]
 }`;
 }
 
-/**
- * Generate mock feedback for development/testing
- */
+async function generateReplicateFeedback(
+  metrics: SwingMetrics,
+  score: ScoreBreakdown
+): Promise<AnalysisFeedback> {
+  const prompt = buildPrompt(metrics, score);
+  
+  const token = process.env.REPLICATE_API_TOKEN;
+  if (!token) {
+    throw new Error('REPLICATE_API_TOKEN not configured');
+  }
+
+  console.log('Calling Replicate directly...');
+
+  const response = await fetch('https://api.replicate.com/v1/predictions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Token ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      version: '13c3cdee13ee059ab779f0291d29054dab00a47dad8261375654de5540165fb0',
+      input: {
+        prompt: prompt,
+        max_tokens: 1000,
+        temperature: 0.7,
+      },
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error('Replicate error:', data);
+    throw new Error(`Replicate error: ${data.detail || response.statusText}`);
+  }
+
+  console.log('Prediction created:', data.id);
+
+  let prediction = data;
+  let pollCount = 0;
+  const maxPolls = 120;
+
+  while ((prediction.status === 'processing' || prediction.status === 'starting') && pollCount < maxPolls) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    const pollResponse = await fetch(
+      `https://api.replicate.com/v1/predictions/${prediction.id}`,
+      {
+        headers: { 'Authorization': `Token ${token}` },
+      }
+    );
+
+    prediction = await pollResponse.json();
+    pollCount++;
+    console.log(`Poll ${pollCount}: ${prediction.status}`);
+  }
+
+  if (prediction.status !== 'succeeded') {
+    console.error('Prediction failed:', prediction);
+    throw new Error(`Prediction failed: ${prediction.status}`);
+  }
+
+  const output = Array.isArray(prediction.output) 
+    ? prediction.output.join('')
+    : prediction.output;
+
+  console.log('Raw LLM output length:', output.length);
+
+  const trimmed = output.trim();
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  
+  if (firstBrace === -1 || lastBrace === -1 || firstBrace > lastBrace) {
+    throw new Error('Could not find JSON in LLM output');
+  }
+
+  let jsonStr = trimmed.substring(firstBrace, lastBrace + 1);
+  
+  jsonStr = jsonStr.replace(/\n\s+,/g, ',');
+  jsonStr = jsonStr.replace(/\n\s+}/g, '}');
+  jsonStr = jsonStr.replace(/\n\s+]/g, ']');
+  jsonStr = jsonStr.replace(/,\s*}/g, '}');
+  jsonStr = jsonStr.replace(/,\s*]/g, ']');
+  
+  try {
+    const feedback = JSON.parse(jsonStr);
+    console.log('✅ Successfully parsed JSON from Replicate');
+    
+    return {
+      setup: feedback.setup || '',
+      backswing: feedback.backswing || '',
+      downswing: feedback.downswing || '',
+      followThrough: feedback.followThrough || '',
+      strengths: Array.isArray(feedback.strengths) ? feedback.strengths : [feedback.strengths || ''],
+      improvements: Array.isArray(feedback.improvements) ? feedback.improvements : [feedback.improvements || ''],
+      drills: Array.isArray(feedback.drills) ? feedback.drills : (Array.isArray(feedback.drill) ? feedback.drill : [feedback.drill || '']),
+      source: 'replicate'
+    };
+  } catch (parseError) {
+    console.error('❌ JSON parse failed:', parseError);
+    throw new Error('Could not parse LLM response as JSON');
+  }
+}
+
 function generateMockFeedback(
   metrics: SwingMetrics,
   score: ScoreBreakdown
@@ -93,77 +198,58 @@ function generateMockFeedback(
   const strengths: string[] = [];
   const improvements: string[] = [];
   const drills: string[] = [];
-  
-  // Analyze metrics and generate appropriate feedback
-  
-  if (metrics.hipRotation >= 45 && metrics.hipRotation <= 90) {
+
+  if (metrics.hipRotation >= 45 && metrics.hipRotation <= 60) {
     strengths.push(
-      `Excellent hip rotation (${metrics.hipRotation}°) during the backswing, generating good power potential`
+      `Your hip rotation of ${metrics.hipRotation.toFixed(1)}° demonstrates excellent lower body engagement and is right in the ideal range for optimal power generation. This rotational movement is the foundation of your swing's power, as it creates the coil that stores energy during the backswing. The fact that you're achieving this rotation consistently shows that you have good flexibility and understanding of the golf swing sequence. This is one of the most important elements that separates consistent ball-strikers from high-handicappers.`
     );
-  } else if (metrics.hipRotation > 90) {
+  } else if (metrics.hipRotation > 60) {
     improvements.push(
-      `Hip rotation is excessive (${metrics.hipRotation}°). Try to limit hip turn to 45-60° to maintain stability`
+      `Your hip rotation of ${metrics.hipRotation.toFixed(1)}° is excessive compared to the ideal 45-60° range. While it might feel like you're generating power, over-rotation actually causes instability and inconsistency in your swing. When your hips rotate too much, you lose the separation between your hip and shoulder rotation, which is crucial for maintaining control and striking the ball consistently. This over-rotation often leads to early extension and loss of posture through impact. You need to work on maintaining a more stable lower body while still achieving full rotation.`
+    );
+    drills.push(
+      `Hip Restriction Drill: Use a belt or resistance band around your hips and practice backswings, focusing on limiting hip rotation to approximately 60° while maintaining full shoulder turn of 90-110°. This creates the hip-shoulder separation that's essential for consistent ball-striking. The belt acts as external feedback to help you feel the correct amount of rotation. Practice this drill 10 times daily for 2 weeks to retrain your muscle memory.`
     );
   }
-  
+
   if (metrics.shoulderTurn >= 90 && metrics.shoulderTurn <= 110) {
     strengths.push(
-      `Great shoulder turn (${metrics.shoulderTurn}°), creating excellent coil and torque`
-    );
-  } else if (metrics.shoulderTurn < 80) {
-    improvements.push(
-      `Shoulder turn is limited (${metrics.shoulderTurn}°). Work on increasing rotation to 90-110° for more power`
-    );
-    drills.push(
-      `Wall drill: Practice turning your lead shoulder to touch a wall behind you to improve rotation`
+      `Your shoulder turn of ${metrics.shoulderTurn.toFixed(1)}° is excellent and demonstrates strong rotational capability. Combined with your hip rotation, this creates the coil and torque differential that's fundamental to generating power. A full shoulder turn allows you to store maximum energy during the backswing, which you then unleash during the downswing. This metric shows that you have good flexibility and understand the importance of full rotation in the golf swing.`
     );
   }
-  
+
   if (metrics.headMovement <= 2) {
     strengths.push(
-      `Excellent head stability (${metrics.headMovement}cm movement), maintaining your spine angle through impact`
+      `Your head stability is exceptional at only ${metrics.headMovement.toFixed(1)}cm of movement throughout the swing. Keeping your head quiet through impact is absolutely critical for consistency, as any head movement causes your spine angle to change, which directly affects where the club contacts the ball. Elite players maintain head stability to ensure they strike the ball from the same position every time. This is one of your strongest technical attributes.`
     );
-  } else if (metrics.headMovement > 3) {
+  } else if (metrics.headMovement > 2 && metrics.headMovement <= 3) {
     improvements.push(
-      `Head movement (${metrics.headMovement}cm) is affecting consistency. Focus on keeping your head steady through the swing`
-    );
-    drills.push(
-      `Mirror drill: Practice swings while watching your head position in a mirror to build awareness`
+      `Your head movement of ${metrics.headMovement.toFixed(1)}cm is slightly elevated compared to the ideal under 2cm. While this isn't severe, even small amounts of head movement can affect consistency and ball-striking quality. When your head moves laterally or vertically during the swing, your spine angle changes, which changes where the club meets the ball. This is why tour players work so hard on maintaining head stability. You should practice drills that build awareness of your head position.`
     );
   }
-  
+
   if (metrics.weightTransfer >= 0.7) {
     strengths.push(
-      `Strong weight transfer (${(metrics.weightTransfer * 100).toFixed(0)}%), showing good athletic movement`
-    );
-  } else {
-    improvements.push(
-      `Weight transfer is limited (${(metrics.weightTransfer * 100).toFixed(0)}%). Work on shifting pressure from back foot to front foot during downswing`
+      `Your weight transfer of ${(metrics.weightTransfer * 100).toFixed(0)}% demonstrates excellent sequencing and athletic movement through the swing. Proper weight transfer from your back foot to your front foot during the downswing is essential for generating power and maintaining balance. The fact that you're achieving this level of weight shift shows you understand the importance of ground-up sequencing. This is a hallmark of efficient, powerful swings.`
     );
   }
-  
-  // Ensure we have at least 2 items in each category
-  if (strengths.length < 2) {
-    strengths.push(
-      `Good overall swing foundation with a score of ${score.overall}/10`
-    );
-  }
-  
-  if (improvements.length < 2) {
-    improvements.push(
-      `Continue working on consistency and tempo to lower your scores`
-    );
-  }
-  
-  if (drills.length === 0) {
-    drills.push(
-      `Practice with alignment sticks to reinforce proper swing plane and body angles`
-    );
-  }
-  
+
+  const setupFeedback = `Your setup shows a spine angle of ${metrics.spineAngle.toFixed(1)}°, which ${metrics.spineAngle >= 30 && metrics.spineAngle <= 40 ? 'is ideal and indicates excellent posture.' : 'needs adjustment—aim for 30-40°.'}  Proper setup is the foundation of everything that follows. Your posture, stance width, and alignment here will determine whether the rest of your swing can be efficient and repeatable. A neutral spine angle like yours sets you up to maintain your posture through impact, which is critical for consistent ball-striking.`;
+
+  const backswingFeedback = `Your backswing rotation is ${metrics.hipRotation > 40 ? 'strong, with excellent coil.' : 'lacking depth.'} The ${metrics.hipRotation.toFixed(1)}° of hip rotation combined with your ${metrics.shoulderTurn.toFixed(1)}° shoulder turn creates ${metrics.hipRotation > 40 ? 'the separation needed for power generation. You\'re storing energy efficiently during the backswing, which allows you to unleash it powerfully in the downswing. This sequence shows good understanding of swing mechanics.' : 'some concerns. Focus on full rotation to build the coil that powers the downswing.'}`;
+
+  const downswingFeedback = `Your downswing transition shows ${metrics.weightTransfer > 0.6 ? 'excellent sequencing' : 'areas needing work'} with weight transfer of ${(metrics.weightTransfer * 100).toFixed(0)}%. ${metrics.weightTransfer > 0.6 ? 'You\'re shifting to your lead side effectively, which creates stability and leverage for powerful ball-striking. This ground-up sequencing is what separates good golfers from great ones.' : 'You\'re not fully shifting to your lead side, which costs you distance and consistency. Practice shifting weight earlier in the downswing.'}`;
+
+  const followThroughFeedback = `Your finish position shows ${score.followThrough >= 6 ? 'excellent balance and control' : 'some balance issues'}. ${score.followThrough >= 6 ? 'You\'re completing the swing fully and ending in a stable, athletic position, which indicates you\'re maintaining control throughout the swing.' : 'Focus on holding a stable finish position—the follow-through reveals whether you maintained control throughout the swing.'}`;
+
   return {
-    strengths: strengths.slice(0, 3),
-    improvements: improvements.slice(0, 3),
-    drills: drills.slice(0, 2)
+    setup: setupFeedback,
+    backswing: backswingFeedback,
+    downswing: downswingFeedback,
+    followThrough: followThroughFeedback,
+    strengths: strengths.length > 0 ? strengths : ["You're showing solid fundamentals."],
+    improvements: improvements.length > 0 ? improvements : ["Continue working on consistency and tempo."],
+    drills: drills.length > 0 ? drills : ["Mirror drill: Practice slow-motion swings while watching your head position for 10 minutes daily."],
+    source: 'mock'
   };
 }

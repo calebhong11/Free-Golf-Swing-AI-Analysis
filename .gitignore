@@ -36,3 +36,4 @@ next-env.d.ts
 # uploads (temporary storage)
 /uploads
 /tmp
+.env.local

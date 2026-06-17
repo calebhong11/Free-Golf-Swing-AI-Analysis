@@ -16,20 +16,24 @@ export async function generateFeedback(
   metrics: SwingMetrics,
   score: ScoreBreakdown
 ): Promise<AnalysisFeedback> {
-  const apiToken = process.env.REPLICATE_API_TOKEN;
+  console.log('🔍 generateFeedback called');
+  console.log('🔍 Token exists:', !!process.env.REPLICATE_API_TOKEN);
+  console.log('🔍 Token value:', process.env.REPLICATE_API_TOKEN?.substring(0, 10) + '...');
   
-  if (apiToken) {
-    try {
-      const feedback = await generateReplicateFeedback(metrics, score);
-      return { ...feedback, source: 'replicate' };
-    } catch (error) {
-      console.warn('Replicate failed, falling back to mock:', error);
-    }
-  } else {
-    console.warn('REPLICATE_API_TOKEN not configured. Using mock feedback.');
+  const token = process.env.REPLICATE_API_TOKEN;
+  
+  if (!token) {
+    console.log('🔍 No token, using mock');
+    return generateMockFeedback(metrics, score);
   }
-  
-  return { ...generateMockFeedback(metrics, score), source: 'mock' };
+
+  try {
+    console.log('🔍 Attempting Replicate...');
+    return await generateReplicateFeedback(metrics, score);
+  } catch (error) {
+    console.log('🔍 Replicate failed:', error);
+    return generateMockFeedback(metrics, score);
+  }
 }
 
 function buildPrompt(metrics: SwingMetrics, score: ScoreBreakdown): string {

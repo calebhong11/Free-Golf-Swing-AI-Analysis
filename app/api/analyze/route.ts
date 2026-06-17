@@ -1,37 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { generateFeedback } from '@/lib/aiAnalyzer';
 
-// Mock analysis function - replace with real AI analysis later
-async function analyzeSwing(jobId: string) {
-  // Simulate processing time
-  await new Promise(resolve => setTimeout(resolve, 2000));
-
-  // TODO: Replace with real analysis pipeline:
-  // 1. Fetch video from storage using jobId
-  // 2. Extract frames with FFmpeg
-  // 3. Run pose detection (MediaPipe)
-  // 4. Calculate metrics
-  // 5. Score the swing
-  // 6. Generate LLM feedback
-
-  // Mock results for now
+function generateMockMetrics() {
   return {
-    score: 7.2,
-    strengths: [
-      "Excellent hip rotation during the backswing, generating good power potential",
-      "Strong follow-through with good balance and weight transfer",
-      "Good spine angle at address, setting up for a solid swing plane"
-    ],
-    improvements: [
-      "Slight early extension in the downswing - try to maintain your posture through impact",
-      "Head movement of 3.2cm at impact - focus on keeping your head steady",
-      "Consider widening your stance slightly for better stability"
-    ],
-    metrics: {
-      hipRotation: 87,
-      shoulderTurn: 102,
-      headMovement: 3.2
-    },
-    keyFrames: [] // URLs to key frame images would go here
+    hipRotation: 55,
+    shoulderTurn: 105,
+    headMovement: 2.1,
+    spineAngle: 34,
+    armExtension: 0.88,
+    weightTransfer: 0.75,
+  };
+}
+
+function generateMockScore() {
+  return {
+    overall: 7.2,
+    setup: 7,
+    backswing: 7.5,
+    downswing: 7,
+    impact: 7.2,
+    followThrough: 7.5,
   };
 }
 
@@ -47,19 +35,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Perform analysis
-    const results = await analyzeSwing(jobId);
+    console.log('Analyzing swing for job:', jobId);
+
+    const metrics = generateMockMetrics();
+    const score = generateMockScore();
+
+    const feedback = await generateFeedback(metrics, score);
 
     return NextResponse.json({
       jobId,
       status: 'completed',
-      ...results
+      score: feedback.source === 'replicate' ? 7.5 : 7.2,
+      setup: feedback.setup,
+      backswing: feedback.backswing,
+      downswing: feedback.downswing,
+      followThrough: feedback.followThrough,
+      strengths: feedback.strengths,
+      improvements: feedback.improvements,
+      drills: feedback.drills,
+      metrics: {
+        hipRotation: Math.round(metrics.hipRotation),
+        shoulderTurn: Math.round(metrics.shoulderTurn),
+        headMovement: Math.round(metrics.headMovement * 10) / 10,
+      },
+      aiSource: feedback.source,
     });
 
   } catch (error) {
     console.error('Analysis error:', error);
     return NextResponse.json(
-      { error: 'Analysis failed. Please try again.' },
+      { error: error instanceof Error ? error.message : 'Analysis failed' },
       { status: 500 }
     );
   }

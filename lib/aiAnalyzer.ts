@@ -12,13 +12,12 @@ export interface AnalysisFeedback {
   source: 'replicate' | 'mock';
 }
 
+// 1. The "Traffic Cop" function that your API route calls
 export async function generateFeedback(
   metrics: SwingMetrics,
   score: ScoreBreakdown
 ): Promise<AnalysisFeedback> {
   console.log('🔍 generateFeedback called');
-  console.log('🔍 Token exists:', !!process.env.REPLICATE_API_TOKEN);
-  console.log('🔍 Token value:', process.env.REPLICATE_API_TOKEN?.substring(0, 10) + '...');
   
   const token = process.env.REPLICATE_API_TOKEN;
   
@@ -36,6 +35,7 @@ export async function generateFeedback(
   }
 }
 
+// 2. The Prompt Builder
 function buildPrompt(metrics: SwingMetrics, score: ScoreBreakdown): string {
   return `You are an elite golf instructor analyzing a golfer's swing in detail. Provide VERY COMPREHENSIVE, INSIGHTFUL feedback.
 
@@ -91,23 +91,28 @@ Respond ONLY in JSON:
 }`;
 }
 
+// 3. The actual Replicate API caller (with the Bearer token fix)
 async function generateReplicateFeedback(
   metrics: SwingMetrics,
   score: ScoreBreakdown
 ): Promise<AnalysisFeedback> {
   const prompt = buildPrompt(metrics, score);
   
-  const token = process.env.REPLICATE_API_TOKEN;
-  if (!token) {
+  const rawToken = process.env.REPLICATE_API_TOKEN;
+  if (!rawToken) {
     throw new Error('REPLICATE_API_TOKEN not configured');
   }
+
+  // 1. Sanitize the token to remove hidden spaces, newlines, or quotes
+  const token = rawToken.trim().replace(/['"]+/g, '');
 
   console.log('Calling Replicate directly...');
 
   const response = await fetch('https://api.replicate.com/v1/predictions', {
     method: 'POST',
+    cache: 'no-store', // 2. Bypass Next.js fetch caching
     headers: {
-      'Authorization': `Token ${token}`,
+      'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -137,9 +142,10 @@ async function generateReplicateFeedback(
     await new Promise(resolve => setTimeout(resolve, 1000));
 
     const pollResponse = await fetch(
-      `https://api.replicate.com/v1/predictions/${prediction.id}`,
+      prediction.urls.get, 
       {
-        headers: { 'Authorization': `Token ${token}` },
+        cache: 'no-store', // 3. Critical for Next.js polling loops
+        headers: { 'Authorization': `Bearer ${token}` },
       }
     );
 
@@ -195,6 +201,7 @@ async function generateReplicateFeedback(
   }
 }
 
+// 4. The Fallback Mock Data
 function generateMockFeedback(
   metrics: SwingMetrics,
   score: ScoreBreakdown

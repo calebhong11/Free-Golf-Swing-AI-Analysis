@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
-
+export const maxDuration = 60; // Optional: extends timeout for AI processing
+export const dynamic = 'force-dynamic';
 // This is a simplified version that just accepts the upload
 // In production, you'd save to S3/cloud storage
 

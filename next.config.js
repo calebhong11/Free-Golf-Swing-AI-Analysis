@@ -6,11 +6,7 @@ const nextConfig = {
     },
   },
   // Allow larger file uploads
-  api: {
-    bodyParser: {
-      sizeLimit: '50mb',
-    },
-  },
+  
 }
 
 module.exports = nextConfig

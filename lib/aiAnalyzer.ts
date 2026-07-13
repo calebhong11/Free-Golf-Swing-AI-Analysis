@@ -96,21 +96,20 @@ async function generateReplicateFeedback(
   metrics: SwingMetrics,
   score: ScoreBreakdown
 ): Promise<AnalysisFeedback> {
-  const prompt = buildPrompt(metrics, score);
-  
+  // 1. Force the model to output JSON by injecting a strict rule at the end of your prompt
+  const prompt = buildPrompt(metrics, score) + 
+    "\n\nCRITICAL INSTRUCTION: You must respond ONLY with a valid JSON object. Do NOT use double quotation marks inside your text explanations (use single quotes like 'this' if needed). Do not include any conversational text or markdown. Start your response immediately with { and end it with }.";
   const rawToken = process.env.REPLICATE_API_TOKEN;
   if (!rawToken) {
     throw new Error('REPLICATE_API_TOKEN not configured');
   }
 
-  // 1. Sanitize the token to remove hidden spaces, newlines, or quotes
   const token = rawToken.trim().replace(/['"]+/g, '');
 
   console.log('Calling Replicate directly...');
 
-  const response = await fetch('https://api.replicate.com/v1/predictions', {
-    method: 'POST',
-    cache: 'no-store', // 2. Bypass Next.js fetch caching
+const response = await fetch('https://api.replicate.com/v1/predictions', {    method: 'POST',
+    cache: 'no-store', 
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
@@ -119,8 +118,8 @@ async function generateReplicateFeedback(
       version: '13c3cdee13ee059ab779f0291d29054dab00a47dad8261375654de5540165fb0',
       input: {
         prompt: prompt,
-        max_tokens: 1000,
-        temperature: 0.7,
+        max_new_tokens: 2500,
+        temperature: 0.2, 
       },
     }),
   });
@@ -144,7 +143,7 @@ async function generateReplicateFeedback(
     const pollResponse = await fetch(
       prediction.urls.get, 
       {
-        cache: 'no-store', // 3. Critical for Next.js polling loops
+        cache: 'no-store', 
         headers: { 'Authorization': `Bearer ${token}` },
       }
     );
@@ -165,38 +164,54 @@ async function generateReplicateFeedback(
 
   console.log('Raw LLM output length:', output.length);
 
-  const trimmed = output.trim();
-  const firstBrace = trimmed.indexOf('{');
-  const lastBrace = trimmed.lastIndexOf('}');
+  // 2. Use Regex to extract only the JSON object, ignoring any conversational filler
+  const jsonMatch = output.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
   
-  if (firstBrace === -1 || lastBrace === -1 || firstBrace > lastBrace) {
+  if (!jsonMatch) {
+    console.error('LLM failed to generate JSON. Output preview:', output.substring(0, 500));
     throw new Error('Could not find JSON in LLM output');
   }
 
-  let jsonStr = trimmed.substring(firstBrace, lastBrace + 1);
+  let jsonStr = jsonMatch[0];
   
-  jsonStr = jsonStr.replace(/\n\s+,/g, ',');
-  jsonStr = jsonStr.replace(/\n\s+}/g, '}');
-  jsonStr = jsonStr.replace(/\n\s+]/g, ']');
-  jsonStr = jsonStr.replace(/,\s*}/g, '}');
-  jsonStr = jsonStr.replace(/,\s*]/g, ']');
+  // Clean up trailing commas (a very common LLM hallucination in JSON)
+  jsonStr = jsonStr.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
   
   try {
     const feedback = JSON.parse(jsonStr);
     console.log('✅ Successfully parsed JSON from Replicate');
+    
+    // Helper function to safely convert LLM objects into simple strings for React
+    const safeStringArray = (data: any): string[] => {
+      if (!data) return [];
+      const arr = Array.isArray(data) ? data : [data];
+      
+      return arr.map(item => {
+        if (typeof item === 'string') return item;
+        
+        // If the LLM returned an object like { metric, value, description }, grab the useful text
+        if (typeof item === 'object' && item !== null) {
+          // Fallback through common keys the LLM might use
+          return item.description || item.text || item.metric || JSON.stringify(item);
+        }
+        
+        return String(item);
+      });
+    };
     
     return {
       setup: feedback.setup || '',
       backswing: feedback.backswing || '',
       downswing: feedback.downswing || '',
       followThrough: feedback.followThrough || '',
-      strengths: Array.isArray(feedback.strengths) ? feedback.strengths : [feedback.strengths || ''],
-      improvements: Array.isArray(feedback.improvements) ? feedback.improvements : [feedback.improvements || ''],
-      drills: Array.isArray(feedback.drills) ? feedback.drills : (Array.isArray(feedback.drill) ? feedback.drill : [feedback.drill || '']),
+      strengths: safeStringArray(feedback.strengths),
+      improvements: safeStringArray(feedback.improvements),
+      drills: safeStringArray(feedback.drills || feedback.drill),
       source: 'replicate'
     };
   } catch (parseError) {
     console.error('❌ JSON parse failed:', parseError);
+    console.error('Failed JSON string snippet:', jsonStr.substring(0, 200) + '...');
     throw new Error('Could not parse LLM response as JSON');
   }
 }

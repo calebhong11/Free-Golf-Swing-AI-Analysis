@@ -15,22 +15,34 @@ export interface AnalysisFeedback {
 // 1. The "Traffic Cop" function that your API route calls
 export async function generateFeedback(
   metrics: SwingMetrics,
-  score: ScoreBreakdown
+  score: ScoreBreakdown,
+  base64ImageString: string, // 1. ADD IT HERE
+  retries = 1
 ): Promise<AnalysisFeedback> {
   console.log('🔍 generateFeedback called');
   
   const token = process.env.REPLICATE_API_TOKEN;
   
   if (!token) {
-    console.log('🔍 No token, using mock');
     return generateMockFeedback(metrics, score);
   }
 
   try {
-    console.log('🔍 Attempting Replicate...');
-    return await generateReplicateFeedback(metrics, score);
+    console.log(`🔍 Attempting Replicate... (Retries left: ${retries})`);
+    
+    // 2. FIX YOUR ERROR: Pass it into the actual Replicate caller here!
+    return await generateReplicateFeedback(metrics, score, base64ImageString);
+    
   } catch (error) {
     console.log('🔍 Replicate failed:', error);
+    
+    if (retries > 0) {
+      console.log('🔄 Retrying Replicate request...');
+      
+      // 3. Make sure the retry loop also passes it back in
+      return generateFeedback(metrics, score, base64ImageString, retries - 1);
+    }
+    
     return generateMockFeedback(metrics, score);
   }
 }
@@ -94,11 +106,13 @@ Respond ONLY in JSON:
 // 3. The actual Replicate API caller (with the Bearer token fix)
 async function generateReplicateFeedback(
   metrics: SwingMetrics,
-  score: ScoreBreakdown
+  score: ScoreBreakdown,
+  base64ImageString: string // <--- ADD THIS LINE HERE
 ): Promise<AnalysisFeedback> {
   // 1. Force the model to output JSON by injecting a strict rule at the end of your prompt
   const prompt = buildPrompt(metrics, score) + 
-    "\n\nCRITICAL INSTRUCTION: You must respond ONLY with a valid JSON object. Do NOT use double quotation marks inside your text explanations (use single quotes like 'this' if needed). Do not include any conversational text or markdown. Start your response immediately with { and end it with }.";
+    "\n\nCRITICAL INSTRUCTION: YOU MUST RESPOND ONLY WITH VALID JSON. ABSOLUTELY NO DOUBLE QUOTES ARE ALLOWED INSIDE YOUR PARAGRAPHS. You may only use double quotes for JSON keys and to open/close strings. If you need to quote a word, use single quotes ('like this'). Do not include any conversational text. Start your response immediately with { and end it with }.";
+  
   const rawToken = process.env.REPLICATE_API_TOKEN;
   if (!rawToken) {
     throw new Error('REPLICATE_API_TOKEN not configured');
@@ -108,17 +122,19 @@ async function generateReplicateFeedback(
 
   console.log('Calling Replicate directly...');
 
-const response = await fetch('https://api.replicate.com/v1/predictions', {    method: 'POST',
+ const response = await fetch('https://api.replicate.com/v1/models/meta/llama-3.2-11b-vision-instruct/predictions', {    
+    method: 'POST',
     cache: 'no-store', 
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      version: '13c3cdee13ee059ab779f0291d29054dab00a47dad8261375654de5540165fb0',
       input: {
+        // THE NEW PART: Pass your extracted frame here as a Base64 data URI
+        image: base64ImageString, 
         prompt: prompt,
-        max_new_tokens: 2500,
+        max_tokens: 2500,
         temperature: 0.2, 
       },
     }),
@@ -135,7 +151,7 @@ const response = await fetch('https://api.replicate.com/v1/predictions', {    me
 
   let prediction = data;
   let pollCount = 0;
-  const maxPolls = 120;
+  const maxPolls = 180;
 
   while ((prediction.status === 'processing' || prediction.status === 'starting') && pollCount < maxPolls) {
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -172,9 +188,7 @@ const response = await fetch('https://api.replicate.com/v1/predictions', {    me
     throw new Error('Could not find JSON in LLM output');
   }
 
-  
-  // 1. Clean up trailing commas (a very common LLM hallucination in JSON)
- let jsonStr = jsonMatch[0];
+  let jsonStr = jsonMatch[0];
   
   // 1. Clean up trailing commas (a very common LLM hallucination in JSON)
   jsonStr = jsonStr.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');

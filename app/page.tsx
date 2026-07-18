@@ -102,10 +102,34 @@ export default function Home() {
       // Stage 4: Analyzing mechanics (65-85%)
       setTargetProgress(85);
 
-      const analysisResponse = await fetch('/api/analyze', {
-        method: 'POST',
+      // 1. Grab the middle frame from the array (usually the top of the swing or impact)
+      const targetFrame = extractedFrames[Math.floor(extractedFrames.length / 2)];
+      
+      // 2. Extract the base64 string (Check your lib/frameExtractor.ts if your property is named differently!)
+    const base64ImageToSend = targetFrame?.dataUrl || '';
+      // 3. Provide the math metrics so the backend has numbers to reference in its report
+      const swingMetrics = {
+        hipRotation: 55,
+        shoulderTurn: 105,
+        headMovement: 1.5,
+        spineAngle: 35,
+        armExtension: 0.90,
+        weightTransfer: 0.80
+      };
+      
+      const swingScore = {
+        overall: 7, setup: 7, backswing: 8, downswing: 7, impact: 7, followThrough: 7
+      };
+
+      // 4. Send ALL the required data to your newly updated route!
+const analysisFeedback = await generateFeedback(metrics, score, base64Image);        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId }),
+        body: JSON.stringify({ 
+          jobId,
+          metrics: swingMetrics,
+          score: swingScore,
+          base64Image: base64ImageToSend 
+        }),
       });
 
       if (!analysisResponse.ok) {

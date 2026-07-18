@@ -1,70 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generateFeedback } from '@/lib/aiAnalyzer';
+import { generateFeedback } from '@/lib/aiAnalyzer'; 
 
-function generateMockMetrics() {
-  return {
-    hipRotation: 55,
-    shoulderTurn: 105,
-    headMovement: 2.1,
-    spineAngle: 34,
-    armExtension: 0.88,
-    weightTransfer: 0.75,
-  };
-}
-
-function generateMockScore() {
-  return {
-    overall: 7.2,
-    setup: 7,
-    backswing: 7.5,
-    downswing: 7,
-    impact: 7.2,
-    followThrough: 7.5,
-  };
-}
+export const maxDuration = 60; 
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('🔍 AI Analysis route called');
+    
+    // 1. Parse the incoming request
     const body = await request.json();
-    const { jobId } = body;
+    
+    // 2. Destructure exactly what the frontend sent (This fixes the 'base64Image' error)
+    const { metrics, score, base64Image } = body;
 
-    if (!jobId) {
-      return NextResponse.json(
-        { error: 'Job ID is required' },
-        { status: 400 }
-      );
+    // 3. Validation checks
+    if (!metrics || !score) {
+      console.error('❌ Metrics or score missing from request body');
+      return NextResponse.json({ error: 'Metrics and score are required' }, { status: 400 });
     }
 
-    console.log('Analyzing swing for job:', jobId);
+    if (!base64Image) {
+      console.error('❌ Extracted frame image (base64Image) is missing');
+      return NextResponse.json({ error: 'Base64 image frame is required for vision analysis' }, { status: 400 });
+    }
 
-    const metrics = generateMockMetrics();
-    const score = generateMockScore();
+    console.log('📦 Passing data to AI Analyzer...');
 
-    const feedback = await generateFeedback(metrics, score);
+    // 4. Call your AI function
+    const analysisFeedback = await generateFeedback(metrics, score, base64Image);
 
-    return NextResponse.json({
-      jobId,
-      status: 'completed',
-      score: feedback.source === 'replicate' ? 7.5 : 7.2,
-      setup: feedback.setup,
-      backswing: feedback.backswing,
-      downswing: feedback.downswing,
-      followThrough: feedback.followThrough,
-      strengths: feedback.strengths,
-      improvements: feedback.improvements,
-      drills: feedback.drills,
-      metrics: {
-        hipRotation: Math.round(metrics.hipRotation),
-        shoulderTurn: Math.round(metrics.shoulderTurn),
-        headMovement: Math.round(metrics.headMovement * 10) / 10,
-      },
-      aiSource: feedback.source,
-    });
+    // 5. Return the result directly (This fixes all the 'feedback' errors!)
+    return NextResponse.json(analysisFeedback);
 
   } catch (error) {
-    console.error('Analysis error:', error);
+    console.error('❌ AI analysis route error:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Analysis failed' },
+      { error: error instanceof Error ? error.message : 'AI analysis failed' },
       { status: 500 }
     );
   }

@@ -172,10 +172,15 @@ const response = await fetch('https://api.replicate.com/v1/predictions', {    me
     throw new Error('Could not find JSON in LLM output');
   }
 
-  let jsonStr = jsonMatch[0];
   
-  // Clean up trailing commas (a very common LLM hallucination in JSON)
+  // 1. Clean up trailing commas (a very common LLM hallucination in JSON)
+ let jsonStr = jsonMatch[0];
+  
+  // 1. Clean up trailing commas (a very common LLM hallucination in JSON)
   jsonStr = jsonStr.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+  
+  // 2. THE FIX: Replace ALL control characters (including newlines and tabs) with a standard space
+  jsonStr = jsonStr.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ');
   
   try {
     const feedback = JSON.parse(jsonStr);
@@ -211,7 +216,11 @@ const response = await fetch('https://api.replicate.com/v1/predictions', {    me
     };
   } catch (parseError) {
     console.error('❌ JSON parse failed:', parseError);
-    console.error('Failed JSON string snippet:', jsonStr.substring(0, 200) + '...');
+    console.error('Position of error: ~390');
+    console.error('JSON snippet around position 390:');
+    console.error(jsonStr.substring(380, 410));
+    console.error('Full JSON (first 500 chars):');
+    console.error(jsonStr.substring(0, 500));
     throw new Error('Could not parse LLM response as JSON');
   }
 }
